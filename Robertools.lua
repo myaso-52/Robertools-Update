@@ -1,6 +1,6 @@
 script_name("Robertools") 
 script_author("Sanek Prokuratura")   
-script_version("3.1") 
+script_version("3.0") 
 
 local samplua = require 'lib.samp.events'
 local ffi = require 'ffi'
@@ -108,7 +108,7 @@ function logMuteAction(player_id, reason_word, type_id)
     local file = io.open(log_path, "a")
     if file then
         local time_str = os.date("%Y-%m-%d [%H:%M:%S]")
-        local type_str = (type_id == 2) and "Оск. Родных" or "Мат/Оск"
+        local type_str = (type_id == 2) and "Оск. Родных" or "Mat/Оск"
         local p_name = sampIsPlayerConnected(tonumber(player_id)) and sampGetPlayerNickname(tonumber(player_id)) or "Unknown"
         file:write(string.format("%s Нарушитель: %s[%s] | Тип: %s | Триггер: %s\n", time_str, p_name, player_id, type_str, reason_word))
         file:close()
@@ -155,7 +155,6 @@ function getPlayerStaffLevel()
     local my_nickname = sampGetPlayerNickname(my_id)
     local low_nick = my_nickname:lower()
     
-    -- НОВОЕ: Обозначения цветов для вывода статуса в чат
     if low_nick == "robert_robinson" then return 3, "{FF3333}Разработчик {FFFFFF}| ВК: {00FFCC}@dimo4kaenergy" end
     if low_nick == "sanek_prokuratura" then return 3, "{FF3333}Разработчик" end
     
@@ -241,22 +240,21 @@ function registerAdminCommands()
         if not hasAccess(3, true) then return end 
         param = param:match("^%s*(.-)%s*$")
         local target_nick, target_level = param:match("(%S+)%s+(%d+)")
-        
-        -- ПОДСКАЗКА: Если ввели команду неверно, пишется подробная подсказка как надо
         if not target_nick or not target_level then 
             sampAddChatMessage("{FF3333}[Ошибка]{FFFFFF} Формат: /setrang [Ник] [1/2/3]", -1) 
-            sampAddChatMessage("{FFFF00}[Подсказка]{FFFFFF} 1 = Юзер (Зеленый), 2 = Администратор (Оранжевый), 3 = Разработчик (Красный)", -1)
+            sampAddChatMessage("{FFFF00}[Подсказка]{FFFFFF} 1=Юзер (Зеленый), 2=Администратор (Оранжевый), 3=Разработчик (Красный)", -1)
             return 
         end
-        
         local level_num = tonumber(target_level)
-        if level_num < 1 or level_num > 3 then 
-            sampAddChatMessage("{FF3333}[Ошибка]{FFFFFF} Неверный ранг. Доступны только 1, 2 или 3.", -1) 
-            return 
-        end
-        
+        if level_num < 1 or level_num > 3 then sampAddChatMessage("{FF3333}[Ошибка]{FFFFFF} Доступные ранги: 1-Юзер, 2-Админ, 3-Разраб", -1) return end
         target_nick = formatNickname(target_nick)
-        main_ini.Staff[target_nick] = tostring(level_num)
+        
+        -- НОВОЕ: сохраняем старый ВК тег, если он был при смене ранга
+        local current_val = main_ini.Staff[target_nick] or ""
+        local vk_tag = current_val:match("^[^:]+:(.+)$")
+        if vk_tag then main_ini.Staff[target_nick] = tostring(level_num) .. ":" .. vk_tag
+        else main_ini.Staff[target_nick] = tostring(level_num) end
+        
         inicfg.save(main_ini, ini_path)
         local r_names = {"{22FF22}Юзер", "{FF9900}Администратор", "{FF3333}Разработчик"}
         sampAddChatMessage(string.format("{33FF33}[Панель]{FFFFFF} Ранг %s изменен на: %s", target_nick, r_names[level_num]), -1)
@@ -321,20 +319,66 @@ function registerGameCommands()
         if main_ini.Staff then
             for nick, raw_val in pairs(main_ini.Staff) do
                 local lvl_str = tostring(raw_val):match("^([^:]+)") or "1"
+                local vk_tag = tostring(raw_val):match("^[^:]+:(.+)$") or "Не привязан"
                 local level_num = tonumber(lvl_str) or 1
                 
-                -- ИСПРАВЛЕНО: Теперь Юзер подсвечен зеленым, Админ оранжевым, а Разработчик красным цветом
                 local text_lvl = "{22FF22}Юзер"
                 if level_num == 3 then text_lvl = "{FF3333}Разработчик"
                 elseif level_num == 2 then text_lvl = "{FF9900}Администратор" end
                 
+                -- Ссылка ВК теперь красиво выводится для каждого админа из конфига
                 if nick:lower() == "robert_robinson" then
                     sampAddChatMessage(string.format("{FFFFFF}- %s — %s {FFFFFF}| ВК: {00FFCC}@dimo4kaenergy", nick, text_lvl), -1)
                 else
-                    sampAddChatMessage(string.format("{FFFFFF}- %s — %s", nick, text_lvl), -1)
+                    sampAddChatMessage(string.format("{FFFFFF}- %s — %s {FFFFFF}| ВК: {00FFCC}%s", nick, text_lvl, vk_tag), -1)
                 end
             end
         end
+    end)
+
+    -- НОВАЯ КОМАНДА /rvk: Привязка тега/ссылки ВК к своему профилю в конфиге
+    sampRegisterChatCommand("rvk", function(param)
+        if not hasAccess(1, true) then return end
+        param = param:match("^%s*(.-)%s*$")
+        if param == "" then sampAddChatMessage("{FF3333}[Ошибка]{FFFFFF} Формат: /rvk [Ссылка/Тег ВК]", -1) return end
+        
+        local result, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
+        if result and my_id then
+            local my_nickname = formatNickname(sampGetPlayerNickname(my_id))
+            local current_val = main_ini.Staff[my_nickname] or "1"
+            local lvl_str = tostring(current_val):match("^([^:]+)") or "1"
+            
+            main_ini.Staff[my_nickname] = lvl_str .. ":" .. param
+            inicfg.save(main_ini, ini_path)
+            sampAddChatMessage(string.format("{33FF33}[Панель]{FFFFFF} Вы успешно привязали ВК: {00FFCC}%s", param), -1)
+        end
+    end)
+
+    -- НОВАЯ КОМАНДА /rstats: Красивая личная статистика игрока
+    sampRegisterChatCommand("rstats", function()
+        if not hasAccess(1, true) then return end
+        local _, txt_status = getPlayerStaffLevel()
+        local time_str = os.date("%H:%M:%S") -- Текущее время по Мск (синхронизировано с ПК)
+        
+        -- Считываем дату регистрации тулса (когда файл ответов был создан)
+        local reg_date = "Впервые запущен"
+        local config_full_path = config_dir .. "/" .. config_path
+        local file = io.open(config_full_path, "r")
+        if file then
+            local attrs = lfs and pcall(lfs.attributes, config_full_path)
+            if attrs and type(attrs) == "table" and attrs.change then
+                reg_date = os.date("%Y-%m-%d", attrs.change)
+            else
+                reg_date = "Активен"
+            end
+            file:close()
+        end
+
+        sampAddChatMessage("{33FFF3}============== [ ВАША СТАТИСТИКА ROBERTOOLS ] ==============", -1)
+        sampAddChatMessage(string.format("{FFFFFF}Текущая должность: %s", txt_status), -1)
+        sampAddChatMessage(string.format("{FFFFFF}Время по МСК: {FFFF00}%s", time_str), -1)
+        sampAddChatMessage(string.format("{FFFFFF}Дата авторизации тулса: {00FFCC}%s", reg_date), -1)
+        sampAddChatMessage("{33FFF3}=============================================================", -1)
     end)
 
     sampRegisterChatCommand("dg", function(param)
@@ -351,7 +395,6 @@ function registerGameCommands()
     end)
 
     sampRegisterChatCommand("rthelp", function()
-        -- АНИМАЦИЯ СОХРАНЕНА: Пошаговый вывод текста с микрозадержками wait(50)
         lua_thread.create(function()
             local _, current_txt = getPlayerStaffLevel()
             sampAddChatMessage("{33FFF3}=============== [ СПРАВКА ПО КОМАНДАМ " .. "ROBERTOOLS ] ===============", -1)
@@ -367,6 +410,10 @@ function registerGameCommands()
             sampAddChatMessage("{33FF33}/rw [ID победителя]        " .. "{FFFFFF}— Вручную выбрать и наградить победителя раздачи", -1)
             wait(50)
             sampAddChatMessage("{33FF33}/stafflist                " .. "{FFFFFF}— Посмотреть весь список администрации штата", -1)
+            wait(50)
+            sampAddChatMessage("{33FF33}/rstats                  " .. "{FFFFFF}— Посмотреть личную статистику и время по Мск", -1)
+            wait(50)
+            sampAddChatMessage("{33FF33}/rvk [Ссылка/Тег]         " .. "{FFFFFF}— Привязать/обновить свой ВК в общем списке", -1)
             wait(50)
             sampAddChatMessage("{33FF33}/dg [ID] {FFFFFF}— Дигл (9999 патрон) " .. "| {33FF33}/nb {FFFFFF}— Телепорт на Небоскрёб", -1)
             wait(50)
@@ -415,82 +462,5 @@ function main()
                 end
             end
         end
-    end
-end
-function samplua.onServerMessage(color, text)
-    if is_panel_banned then return end
-    local lower_text = string.cp1251lower(text)
-    
-    if lower_text:find("жалоба от") or lower_text:find("репорт от") then
-        local r_id = text:match("%[%s*(%d+)%s*%]")
-        if r_id then last_report_id = tostring(r_id) ffi.C.MessageBeep(0) end
-        return
-    end
-
-    if razdash_active and string.find(lower_text, razdash_word, 1, true) then
-        local winner_id = text:match("%[%s*(%d+)%s*%]")
-        if winner_id then
-            local res_my_id, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
-            local winner_name = sampGetPlayerNickname(tonumber(winner_id)) or ""
-            
-            if tonumber(winner_id) ~= tonumber(my_id) and not lower_text:find("администратор") and not lower_text:find("админ") and not lower_text:find("a:%s") then
-                local prize_name = getItemNameById(razdash_item_id, razdash_mode)
-                if razdash_mode == 2 then
-                    sampSendChat(string.format("/aad [РАЗДАЧА] Победитель — %s[%s]! Приз: %s", winner_name, winner_id, prize_name))
-                    lua_thread.create(function() wait(1000) sampSendChat(string.format("/object %s", winner_id)) end)
-                else
-                    sampSendChat(string.format("/aad [РАЗДАЧА] Победитель — %s[%s]! Приз: %s %s", winner_name, winner_id, razdash_value, prize_name))
-                    lua_thread.create(function() wait(1000) sampSendChat(string.format("/setstat %s %s %s", winner_id, razdash_item_id, razdash_value)) end)
-                end
-                razdash_active = false
-            end
-        end
-    end
-    checkAndMuteAnyChat(text)
-    
-    -- НОВОЕ ФУНКЦИОНАЛ: Обозначение пользователей в чате!
-    -- Скрипт сканирует входящий чат, находит никнеймы ваших админов и автоматически 
-    -- красит их прямо в сообщениях сервера в зависимости от их рангов.
-    if main_ini and main_ini.Staff then
-        for staff_nick, raw_val in pairs(main_ini.Staff) do
-            if text:find(staff_nick) then
-                local lvl_str = tostring(raw_val):match("^([^:]+)") or "1"
-                local lvl_num = tonumber(lvl_str) or 1
-                
-                -- Подставляем нужный цвет прямо перед ником в чате
-                local color_prefix = "{22FF22}" -- Зеленый для Юзера
-                if lvl_num == 3 then color_prefix = "{FF3333}" -- Красный для Разраба
-                elseif lvl_num == 2 then color_prefix = "{FF9900}" -- Оранжевый для Админа
-                end
-                
-                -- Меняем обычный ник на цветной и выводим измененное сообщение
-                local new_text = text:gsub(staff_nick, color_prefix .. staff_nick .. "{FFFFFF}")
-                -- Перерисовываем строку чата с новыми тегами цвета
-                return {color, new_text}
-            end
-        end
-    end
-end
-function samplua.onShowDialog(dialogId, style, title, button1, button2, text)
-    if is_panel_banned then return end
-    local lower_title = string.cp1251lower(title)
-    local lower_text = string.cp1251lower(text)
-    
-    if mute_stage > 0 and target_mute_id then
-        local final_item = (mute_stage == 1) and 2 or 5 
-        lua_thread.create(function()
-            wait(200) sampSendDialogResponse(dialogId, 1, final_item, "")
-            mute_stage, target_mute_id = 0, nil
-        end)
-        return false 
-    end
-
-    if tp_stage == 1 and (lower_title:find("телепорт") or lower_text:find("мероприяти")) then
-        lua_thread.create(function() wait(350) sampSendDialogResponse(dialogId, 1, 1, "") tp_stage = 2 end)
-        return false
-    end
-    if tp_stage == 2 and (lower_title:find("мероприяти") or lower_text:find("небоскр")) then
-        lua_thread.create(function() wait(300) sampSendDialogResponse(dialogId, 1, 2, "") tp_stage = 0 end)
-        return false
     end
 end
